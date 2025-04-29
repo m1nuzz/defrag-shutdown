@@ -1,0 +1,1 @@
+powershell .\defrag-now.ps1

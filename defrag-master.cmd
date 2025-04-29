@@ -1,0 +1,1 @@
+powershell .\defrag-master.ps1
