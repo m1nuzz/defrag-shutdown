@@ -33,6 +33,174 @@ The generated 'defrag-now.ps1' requires administrative privileges to run Optimiz
 # --- Configuration ---
 $ExecutionScriptFile = Join-Path $PSScriptRoot "defrag-now.ps1" # The script to be generated
 
+# --- WMI Service Management Functions ---
+function Start-WMIService {
+    Write-Host "Starting WMI service (winmgmt)..." -ForegroundColor Cyan
+    
+    try {
+        # Configure service to start automatically
+        $result = & sc.exe config winmgmt start= auto
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to configure winmgmt service: $result"
+        }
+        
+        # Start the service
+        $result = & sc.exe start winmgmt
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to start winmgmt service: $result"
+        }
+        
+        # Wait for service to be running
+        $maxWaitTime = 30 # seconds
+        $waitTime = 0
+        $serviceRunning = $false
+        
+        while ($waitTime -lt $maxWaitTime -and -not $serviceRunning) {
+            Start-Sleep -Seconds 2
+            $waitTime += 2
+            
+            try {
+                $service = Get-Service -Name winmgmt -ErrorAction Stop
+                if ($service.Status -eq 'Running') {
+                    $serviceRunning = $true
+                    Write-Host "WMI service is now running." -ForegroundColor Green
+                }
+                else {
+                    Write-Host "Waiting for WMI service to start... (Status: $($service.Status))" -ForegroundColor Yellow
+                }
+            }
+            catch {
+                Write-Host "Waiting for WMI service to start... (Error: $($_.Exception.Message))" -ForegroundColor Yellow
+            }
+        }
+        
+        if (-not $serviceRunning) {
+            Write-Warning "WMI service failed to start within $maxWaitTime seconds"
+            return $false
+        }
+        
+        # Start wmiprvse.exe process
+        Write-Host "Starting wmiprvse.exe process..." -ForegroundColor Cyan
+        try {
+            Start-Process -FilePath "C:\WINDOWS\system32\wbem\wmiprvse.exe" -ArgumentList "-secured", "-Embedding" -WindowStyle Hidden -ErrorAction Stop
+            Write-Host "wmiprvse.exe process started." -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "Failed to start wmiprvse.exe: $($_.Exception.Message)"
+        }
+        
+        # Wait for wmiprvse.exe process to appear
+        $maxWaitTime = 30 # seconds
+        $waitTime = 0
+        $processRunning = $false
+        
+        while ($waitTime -lt $maxWaitTime -and -not $processRunning) {
+            Start-Sleep -Seconds 2
+            $waitTime += 2
+            
+            try {
+                $processes = Get-Process -Name wmiprvse -ErrorAction Stop
+                if ($processes.Count -gt 0) {
+                    $processRunning = $true
+                    Write-Host "wmiprvse.exe process is now running." -ForegroundColor Green
+                }
+                else {
+                    Write-Host "Waiting for wmiprvse.exe process to start..." -ForegroundColor Yellow
+                }
+            }
+            catch {
+                Write-Host "Waiting for wmiprvse.exe process to start..." -ForegroundColor Yellow
+            }
+        }
+        
+        if (-not $processRunning) {
+            Write-Warning "wmiprvse.exe process failed to start within $maxWaitTime seconds"
+            return $false
+        }
+        
+        Write-Host "WMI service and process are ready." -ForegroundColor Green
+        
+        # Run Windows System Assessment Tool
+        Write-Host "Running Windows System Assessment Tool (winsat formal)..." -ForegroundColor Cyan
+        try {
+            & winsat formal
+            Write-Host "Windows System Assessment Tool completed." -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "Failed to run Windows System Assessment Tool: $($_.Exception.Message)"
+        }
+        
+        return $true
+        
+    }
+    catch {
+        Write-Error "Error starting WMI service: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Stop-WMIService {
+    Write-Host "Stopping WMI service (winmgmt)..." -ForegroundColor Cyan
+    
+    try {
+        # Terminate svchost.exe process that runs winmgmt service
+        Write-Host "Terminating svchost.exe process for winmgmt service..." -ForegroundColor Cyan
+        try {
+            $svchostProcesses = Get-Process -Name svchost -ErrorAction Stop | Where-Object {
+                $_.CommandLine -like "*netsvcs*" -and $_.CommandLine -like "*Winmgmt*"
+            }
+            if ($svchostProcesses.Count -gt 0) {
+                foreach ($process in $svchostProcesses) {
+                    Write-Host "Terminating svchost.exe process (PID: $($process.Id)) for winmgmt service..." -ForegroundColor Yellow
+                    $process.Kill()
+                }
+                Write-Host "svchost.exe process for winmgmt service terminated." -ForegroundColor Green
+            } else {
+                Write-Host "No svchost.exe process found for winmgmt service." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Warning "Failed to terminate svchost.exe process for winmgmt service: $($_.Exception.Message)"
+        }
+        
+        # Stop the service
+        $result = & sc.exe stop winmgmt
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to stop winmgmt service: $result"
+        }
+        
+        # Configure service to start disabled
+        $result = & sc.exe config winmgmt start= disabled
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to configure winmgmt service: $result"
+        }
+        
+        Write-Host "WMI service stopped and disabled." -ForegroundColor Green
+        
+        # Terminate wmiprvse.exe process
+        Write-Host "Terminating wmiprvse.exe process..." -ForegroundColor Cyan
+        try {
+            $processes = Get-Process -Name wmiprvse -ErrorAction Stop
+            if ($processes.Count -gt 0) {
+                foreach ($process in $processes) {
+                    Write-Host "Terminating wmiprvse.exe process (PID: $($process.Id))..." -ForegroundColor Yellow
+                    $process.Kill()
+                }
+                Write-Host "wmiprvse.exe process terminated." -ForegroundColor Green
+            }
+            else {
+                Write-Host "No wmiprvse.exe processes found to terminate." -ForegroundColor Yellow
+            }
+        }
+        catch {
+            Write-Warning "Failed to terminate wmiprvse.exe process: $($_.Exception.Message)"
+        }
+        
+    }
+    catch {
+        Write-Error "Error stopping WMI service: $($_.Exception.Message)"
+    }
+}
+
 # --- Function to detect local fixed drives and their media type ---
 function Get-LocalFixedDrivesWithMediaType {
     Write-Host "Detecting available local fixed drives and their media types..." -ForegroundColor Cyan
@@ -209,6 +377,14 @@ function Get-LocalFixedDrivesWithMediaType {
 
 # --- Main script logic ---
 
+# Start WMI service before proceeding
+Write-Host "Initializing WMI service for drive detection..." -ForegroundColor Cyan
+if (-not (Start-WMIService)) {
+    Write-Error "Failed to start WMI service. Cannot proceed with drive detection."
+    Read-Host "Press Enter to exit."
+    exit 1
+}
+
 # Detect drives and their types
 $availableDrivesInfo = Get-LocalFixedDrivesWithMediaType
 
@@ -347,6 +523,164 @@ Add-Content -Path $ExecutionScriptFile -Value 'Write-Host $DoShutdownType -Foreg
 # Add the rest of the script content
 $footerContent = @"
 
+# --- WMI Service Management Functions ---
+function Start-WMIService {
+    Write-Host "Starting WMI service (winmgmt)..." -ForegroundColor Cyan
+    
+    try {
+        # Configure service to start automatically
+        `$result = & sc.exe config winmgmt start= auto
+        if (`$LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to configure winmgmt service: `$result"
+        }
+        
+        # Start the service
+        `$result = & sc.exe start winmgmt
+        if (`$LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to start winmgmt service: `$result"
+        }
+        
+        # Wait for service to be running
+        `$maxWaitTime = 30 # seconds
+        `$waitTime = 0
+        `$serviceRunning = `$false
+        
+        while (`$waitTime -lt `$maxWaitTime -and -not `$serviceRunning) {
+            Start-Sleep -Seconds 2
+            `$waitTime += 2
+            
+            try {
+                `$service = Get-Service -Name winmgmt -ErrorAction Stop
+                if (`$service.Status -eq 'Running') {
+                    `$serviceRunning = `$true
+                    Write-Host "WMI service is now running." -ForegroundColor Green
+                } else {
+                    Write-Host "Waiting for WMI service to start... (Status: `$(`$service.Status))" -ForegroundColor Yellow
+                }
+            } catch {
+                Write-Host "Waiting for WMI service to start... (Error: `$(`$_.Exception.Message))" -ForegroundColor Yellow
+            }
+        }
+        
+        if (-not `$serviceRunning) {
+            Write-Warning "WMI service failed to start within `$maxWaitTime seconds"
+            return `$false
+        }
+        
+        # Start wmiprvse.exe process
+        Write-Host "Starting wmiprvse.exe process..." -ForegroundColor Cyan
+        try {
+            Start-Process -FilePath "C:\WINDOWS\system32\wbem\wmiprvse.exe" -ArgumentList "-secured", "-Embedding" -WindowStyle Hidden -ErrorAction Stop
+            Write-Host "wmiprvse.exe process started." -ForegroundColor Green
+        } catch {
+            Write-Warning "Failed to start wmiprvse.exe: `$(`$_.Exception.Message)"
+        }
+        
+        # Wait for wmiprvse.exe process to appear
+        `$maxWaitTime = 30 # seconds
+        `$waitTime = 0
+        `$processRunning = `$false
+        
+        while (`$waitTime -lt `$maxWaitTime -and -not `$processRunning) {
+            Start-Sleep -Seconds 2
+            `$waitTime += 2
+            
+            try {
+                `$processes = Get-Process -Name wmiprvse -ErrorAction Stop
+                if (`$processes.Count -gt 0) {
+                    `$processRunning = `$true
+                    Write-Host "wmiprvse.exe process is now running." -ForegroundColor Green
+                } else {
+                    Write-Host "Waiting for wmiprvse.exe process to start..." -ForegroundColor Yellow
+                }
+            } catch {
+                Write-Host "Waiting for wmiprvse.exe process to start..." -ForegroundColor Yellow
+            }
+        }
+        
+        if (-not `$processRunning) {
+            Write-Warning "wmiprvse.exe process failed to start within `$maxWaitTime seconds"
+            return `$false
+        }
+        
+        Write-Host "WMI service and process are ready." -ForegroundColor Green
+        
+        # Run Windows System Assessment Tool
+        Write-Host "Running Windows System Assessment Tool (winsat formal)..." -ForegroundColor Cyan
+        try {
+            & winsat formal
+            Write-Host "Windows System Assessment Tool completed." -ForegroundColor Green
+        } catch {
+            Write-Warning "Failed to run Windows System Assessment Tool: `$(`$_.Exception.Message)"
+        }
+        
+        return `$true
+        
+    } catch {
+        Write-Error "Error starting WMI service: `$(`$_.Exception.Message)"
+        return `$false
+    }
+}
+
+function Stop-WMIService {
+    Write-Host "Stopping WMI service (winmgmt)..." -ForegroundColor Cyan
+    
+    try {
+        # Terminate svchost.exe process that runs winmgmt service
+        Write-Host "Terminating svchost.exe process for winmgmt service..." -ForegroundColor Cyan
+        try {
+            `$svchostProcesses = Get-Process -Name svchost -ErrorAction Stop | Where-Object {
+                `$_.CommandLine -like "*netsvcs*" -and `$_.CommandLine -like "*Winmgmt*"
+            }
+            if (`$svchostProcesses.Count -gt 0) {
+                foreach (`$process in `$svchostProcesses) {
+                    Write-Host "Terminating svchost.exe process (PID: `$(`$process.Id)) for winmgmt service..." -ForegroundColor Yellow
+                    `$process.Kill()
+                }
+                Write-Host "svchost.exe process for winmgmt service terminated." -ForegroundColor Green
+            } else {
+                Write-Host "No svchost.exe process found for winmgmt service." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Warning "Failed to terminate svchost.exe process for winmgmt service: `$(`$_.Exception.Message)"
+        }
+        
+        # Stop the service
+        `$result = & sc.exe stop winmgmt
+        if (`$LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to stop winmgmt service: `$result"
+        }
+        
+        # Configure service to start disabled
+        `$result = & sc.exe config winmgmt start= disabled
+        if (`$LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to configure winmgmt service: `$result"
+        }
+        
+        Write-Host "WMI service stopped and disabled." -ForegroundColor Green
+        
+        # Terminate wmiprvse.exe process
+        Write-Host "Terminating wmiprvse.exe process..." -ForegroundColor Cyan
+        try {
+            `$processes = Get-Process -Name wmiprvse -ErrorAction Stop
+            if (`$processes.Count -gt 0) {
+                foreach (`$process in `$processes) {
+                    Write-Host "Terminating wmiprvse.exe process (PID: `$(`$process.Id))..." -ForegroundColor Yellow
+                    `$process.Kill()
+                }
+                Write-Host "wmiprvse.exe process terminated." -ForegroundColor Green
+            } else {
+                Write-Host "No wmiprvse.exe processes found to terminate." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Warning "Failed to terminate wmiprvse.exe process: `$(`$_.Exception.Message)"
+        }
+        
+    } catch {
+        Write-Error "Error stopping WMI service: `$(`$_.Exception.Message)"
+    }
+}
+
 # --- Check for Administrative Privileges ---
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Error "This script requires administrative privileges to run Optimize-Volume or shutdown.exe."
@@ -357,6 +691,14 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 Write-Host "Starting defragmentation process at `$(Get-Date -Format 'HH:mm:ss on dd-MM-yyyy')" -ForegroundColor Cyan
 Write-Host ""
+
+# Start WMI service before proceeding
+Write-Host "Initializing WMI service for optimization..." -ForegroundColor Cyan
+if (-not (Start-WMIService)) {
+    Write-Error "Failed to start WMI service. Cannot proceed with optimization."
+    Read-Host "Press Enter to exit."
+    exit 1
+}
 
 # --- Defragmentation Process ---
 foreach (`$driveInfo in `$SelectedDrivesInfo) {
@@ -427,6 +769,10 @@ if (`$DoShutdown) {
     Read-Host "Press Enter to exit."
 }
 
+# Stop WMI service after completion
+Write-Host "Stopping WMI service..." -ForegroundColor Cyan
+Stop-WMIService
+
 "@ # End of footer Here-String
 Add-Content -Path $ExecutionScriptFile -Value $footerContent -Encoding UTF8
 
@@ -438,3 +784,7 @@ Write-Host "Launching '$ExecutionScriptFile'..." -ForegroundColor Cyan
 # Use Start-Process to run the script in a new window, ensuring it runs as administrator
 # if the master script was run as administrator.
 Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile", "-ExecutionPolicy Bypass", "-File", "`"$ExecutionScriptFile`"" -Verb RunAs
+
+# Stop WMI service after script generation
+Write-Host "Stopping WMI service..." -ForegroundColor Cyan
+Stop-WMIService
