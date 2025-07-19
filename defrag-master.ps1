@@ -41,9 +41,9 @@ function Get-LocalFixedDrivesWithMediaType {
     # Get all volumes that have a drive letter and are not removable or CD-ROM
     try {
         $volumes = Get-Volume | Where-Object {
-            $_.DriveLetter -ne $null -and
+            $null -ne $_.DriveLetter -and
             $_.DriveType -eq 'Fixed' -and
-            $_.FileSystem -ne $null # Exclude volumes without a file system like System Reserved without a letter
+            $null -ne $_.FileSystem # Exclude volumes without a file system like System Reserved without a letter
         }
 
         foreach ($volume in $volumes) {
@@ -68,8 +68,8 @@ function Get-LocalFixedDrivesWithMediaType {
                     # MSFT_PhysicalDisk DeviceId corresponds to the DiskNumber
                     $cimPhysicalDisk = Get-CimInstance -ClassName MSFT_PhysicalDisk -Namespace root\Microsoft\Windows\Storage | Where-Object { $_.DeviceId -eq $diskNumber } | Select-Object -First 1
                     if ($cimPhysicalDisk) {
-                         # MSFT_PhysicalDisk MediaType values: 3=HDD, 4=SSD, etc. OR strings 'SSD', 'HDD'
-                         switch ($cimPhysicalDisk.MediaType) {
+                        # MSFT_PhysicalDisk MediaType values: 3=HDD, 4=SSD, etc. OR strings 'SSD', 'HDD'
+                        switch ($cimPhysicalDisk.MediaType) {
                             3 { $MediaType = "HDD" }
                             4 { $MediaType = "SSD" }
                             "SSD" { $MediaType = "SSD" } # Correctly map string "SSD"
@@ -77,11 +77,13 @@ function Get-LocalFixedDrivesWithMediaType {
                             default { $MediaType = "Unknown" }
                         }
                         Write-Host "[DEBUG] Got MediaType '$($cimPhysicalDisk.MediaType)' mapped to '$MediaType' from MSFT_PhysicalDisk for physical disk $diskNumber." -ForegroundColor DarkGray
-                    } else {
+                    }
+                    else {
                         Write-Warning "Could not find MSFT_PhysicalDisk instance for disk number $diskNumber. Attempting Get-PhysicalDisk fallback."
                         $ErrorOccurred = $true # Mark as error for this method, but continue to next
                     }
-                } catch {
+                }
+                catch {
                     Write-Warning "Error querying MSFT_PhysicalDisk for drive $($driveLetter): $($_.Exception.Message). Attempting Get-PhysicalDisk fallback."
                     $ErrorOccurred = $true # Mark as error, continue to next
                 }
@@ -92,39 +94,43 @@ function Get-LocalFixedDrivesWithMediaType {
                     $physicalDisk = $null
                     try {
                         # Get-PhysicalDisk by DiskNumber (using -DiskNumber or -Number)
-                         # Note: Depending on PowerShell version, -Number or -DiskNumber might be needed.
-                         # Let's try -DiskNumber first as it's more common with Get-PhysicalDisk
+                        # Note: Depending on PowerShell version, -Number or -DiskNumber might be needed.
+                        # Let's try -DiskNumber first as it's more common with Get-PhysicalDisk
                         $physicalDisk = Get-PhysicalDisk -DiskNumber $diskNumber -ErrorAction Stop
                         if ($physicalDisk) {
                             $MediaType = $physicalDisk.MediaType
                             Write-Host "[DEBUG] Got MediaType '$MediaType' from Get-PhysicalDisk for physical disk $diskNumber." -ForegroundColor DarkGray
-                        } else {
+                        }
+                        else {
                             Write-Warning "Could not find matching PhysicalDisk object by DiskNumber $diskNumber. Attempting Win32_DiskDrive fallback."
                             $ErrorOccurred = $true # Mark as error, continue to next
-                         }
-                    } catch {
-                         # If -Number failed, try -Number as a last resort for Get-PhysicalDisk
-                         try {
-                             $physicalDisk = Get-PhysicalDisk -Number $diskNumber -ErrorAction Stop
-                             if ($physicalDisk) {
-                                 $MediaType = $physicalDisk.MediaType
-                                 Write-Host "[DEBUG] Got MediaType '$MediaType' from Get-PhysicalDisk (using -Number) for physical disk $diskNumber." -ForegroundColor DarkGray
-                             } else {
-                                 Write-Warning "Could not find matching PhysicalDisk object by Number $diskNumber. Attempting Win32_DiskDrive fallback."
-                                 $ErrorOccurred = $true # Mark as error, continue to next
-                             }
-                         } catch {
-                             Write-Warning "Error querying Get-PhysicalDisk (both -DiskNumber and -Number failed) for drive $($driveLetter): $($_.Exception.Message). Attempting Win32_DiskDrive fallback."
-                             $ErrorOccurred = $true # Mark as error, continue to next
-                         }
+                        }
+                    }
+                    catch {
+                        # If -Number failed, try -Number as a last resort for Get-PhysicalDisk
+                        try {
+                            $physicalDisk = Get-PhysicalDisk -Number $diskNumber -ErrorAction Stop
+                            if ($physicalDisk) {
+                                $MediaType = $physicalDisk.MediaType
+                                Write-Host "[DEBUG] Got MediaType '$MediaType' from Get-PhysicalDisk (using -Number) for physical disk $diskNumber." -ForegroundColor DarkGray
+                            }
+                            else {
+                                Write-Warning "Could not find matching PhysicalDisk object by Number $diskNumber. Attempting Win32_DiskDrive fallback."
+                                $ErrorOccurred = $true # Mark as error, continue to next
+                            }
+                        }
+                        catch {
+                            Write-Warning "Error querying Get-PhysicalDisk (both -DiskNumber and -Number failed) for drive $($driveLetter): $($_.Exception.Message). Attempting Win32_DiskDrive fallback."
+                            $ErrorOccurred = $true # Mark as error, continue to next
+                        }
                     }
                 }
 
-                 # --- Attempt 3: Fallback to WMI (Win32_DiskDrive) if previous methods failed ---
+                # --- Attempt 3: Fallback to WMI (Win32_DiskDrive) if previous methods failed ---
                 if ($MediaType -eq "Unknown" -and $ErrorOccurred) {
-                     $ErrorOccurred = $false # Reset error flag for this attempt
+                    $ErrorOccurred = $false # Reset error flag for this attempt
                     try {
-                         $wmiDisk = Get-CimInstance -ClassName Win32_DiskDrive | Where-Object { $_.DeviceID -eq "\\.\PHYSICALDRIVE$diskNumber" } | Select-Object -First 1
+                        $wmiDisk = Get-CimInstance -ClassName Win32_DiskDrive | Where-Object { $_.DeviceID -eq "\\.\PHYSICALDRIVE$diskNumber" } | Select-Object -First 1
 
                         if ($wmiDisk) {
                             # WMI MediaType values: 0=Unknown, 1=Not Available, 3=HDD, 4=SSD, etc.
@@ -142,17 +148,18 @@ function Get-LocalFixedDrivesWithMediaType {
                                 default { $MediaType = "Unknown" }
                             }
                             Write-Host "[DEBUG] Got WMI MediaType '$($wmiDisk.MediaType)' mapped to '$MediaType' from Win32_DiskDrive for physical disk $diskNumber." -ForegroundColor DarkGray
-                             # If WMI successfully found a type, clear the error flag for this drive
-                             if ($MediaType -ne "Unknown") { $ErrorOccurred = $false }
-                        } else {
+                            # If WMI successfully found a type, clear the error flag for this drive
+                            if ($MediaType -ne "Unknown") { $ErrorOccurred = $false }
+                        }
+                        else {
                             Write-Warning "Could not find WMI Win32_DiskDrive instance for disk number $diskNumber."
                             $ErrorOccurred = $true # Still an error if WMI also fails
                         }
                     }
                     catch {
-                         Write-Warning "Error during Win32_DiskDrive WMI fallback for drive $($driveLetter): $($_.Exception.Message)"
-                         $ErrorOccurred = $true # Ensure error is true if WMI fallback fails
-                         $MediaType = "Unknown" # Ensure MediaType is Unknown on error
+                        Write-Warning "Error during Win32_DiskDrive WMI fallback for drive $($driveLetter): $($_.Exception.Message)"
+                        $ErrorOccurred = $true # Ensure error is true if WMI fallback fails
+                        $MediaType = "Unknown" # Ensure MediaType is Unknown on error
                     }
                 }
 
@@ -172,9 +179,10 @@ function Get-LocalFixedDrivesWithMediaType {
             }
 
             if ($MediaType -eq "Unknown") {
-                 Write-Host "Found local fixed drive: $($driveLetter): (Media Type: Could not determine or Unknown)" -ForegroundColor Yellow
-            } else {
-                 Write-Host "Found local fixed drive: $($driveLetter): (Media Type: $MediaType)" -ForegroundColor Green
+                Write-Host "Found local fixed drive: $($driveLetter): (Media Type: Could not determine or Unknown)" -ForegroundColor Yellow
+            }
+            else {
+                Write-Host "Found local fixed drive: $($driveLetter): (Media Type: $MediaType)" -ForegroundColor Green
             }
             Write-Host "=== Finished checking drive letter $($driveLetter): ===" -ForegroundColor DarkCyan
         }
@@ -189,7 +197,8 @@ function Get-LocalFixedDrivesWithMediaType {
         $driveSummary = $availableDrivesInfo | ForEach-Object { "$($_.DriveLetter): ($($_.MediaType))" } | Out-String
         Write-Host "FINAL Check: Available drives found:" -ForegroundColor Cyan
         Write-Host $driveSummary.Trim() -ForegroundColor Cyan
-    } else {
+    }
+    else {
         Write-Host "FINAL Check: No available drives found." -ForegroundColor Yellow
     }
     Write-Host "========================================" -ForegroundColor Cyan
@@ -225,7 +234,8 @@ $selectedDrivesInfo = @()
 
 if ($userInput -eq "ALL") {
     $selectedDrivesInfo = $validAvailableDrivesInfo
-} else {
+}
+else {
     $inputDriveLetters = $userInput.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.ToUpper() }
 
     foreach ($inputDrive in $inputDriveLetters) {
@@ -234,7 +244,8 @@ if ($userInput -eq "ALL") {
 
         if ($foundDrive) {
             $selectedDrivesInfo += $foundDrive
-        } else {
+        }
+        else {
             Write-Warning "Drive $inputDrive is not a valid local fixed drive listed above or was not entered correctly. Skipping."
         }
     }
@@ -258,10 +269,12 @@ $doShutdown = $false
 $shutdownChoice = Read-Host "Include option to Shutdown PC after defragmentation? (Y/N)"
 $shutdownChoice = $shutdownChoice.Trim().ToUpper() # Convert to uppercase to be more forgiving
 
-if ($shutdownChoice -eq "Y") { # Case-insensitive check for 'Y'
+if ($shutdownChoice -eq "Y") {
+    # Case-insensitive check for 'Y'
     $doShutdown = $true
     Write-Host "Shutdown option will be included in the execution script." -ForegroundColor Yellow
-} else {
+}
+else {
     $doShutdown = $false # Explicitly set to false
     Write-Host "PC will remain on after defragmentation." -ForegroundColor Yellow
 }
@@ -316,7 +329,8 @@ Add-Content -Path $ExecutionScriptFile -Value $selectedDrivesInfoString -Encodin
 # This ensures we write the literal strings "$true" or "$false" to the file
 if ($doShutdown) {
     Add-Content -Path $ExecutionScriptFile -Value '$DoShutdown = $true' -Encoding UTF8
-} else {
+}
+else {
     Add-Content -Path $ExecutionScriptFile -Value '$DoShutdown = $false' -Encoding UTF8
 }
 
