@@ -120,14 +120,18 @@ function Start-WMIService {
         
         Write-Host "WMI service and process are ready." -ForegroundColor Green
         
-        # Run Windows System Assessment Tool
-        Write-Host "Running Windows System Assessment Tool (winsat formal)..." -ForegroundColor Cyan
+        # Run disk performance test
+        Write-Host "Running disk performance test..." -ForegroundColor Cyan
         try {
-            & winsat formal
-            Write-Host "Windows System Assessment Tool completed." -ForegroundColor Green
+            Get-PSDrive -PSProvider FileSystem |
+              ForEach-Object {
+                Write-Host "=== Testing disk $($_.Name) ===" -ForegroundColor Yellow
+                & winsat disk -drive $($_.Name)
+              }
+            Write-Host "Disk performance test completed." -ForegroundColor Green
         }
         catch {
-            Write-Warning "Failed to run Windows System Assessment Tool: $($_.Exception.Message)"
+            Write-Warning "Failed to run disk performance test: $($_.Exception.Message)"
         }
         
         return $true
@@ -605,13 +609,17 @@ function Start-WMIService {
         
         Write-Host "WMI service and process are ready." -ForegroundColor Green
         
-        # Run Windows System Assessment Tool
-        Write-Host "Running Windows System Assessment Tool (winsat formal)..." -ForegroundColor Cyan
+        # Run disk performance test
+        Write-Host "Running disk performance test..." -ForegroundColor Cyan
         try {
-            & winsat formal
-            Write-Host "Windows System Assessment Tool completed." -ForegroundColor Green
+            Get-PSDrive -PSProvider FileSystem |
+              ForEach-Object {
+                Write-Host "=== Testing disk `$(`$_.Name) ===" -ForegroundColor Yellow
+                & winsat disk -drive `$(`$_.Name)
+              }
+            Write-Host "Disk performance test completed." -ForegroundColor Green
         } catch {
-            Write-Warning "Failed to run Windows System Assessment Tool: `$(`$_.Exception.Message)"
+            Write-Warning "Failed to run disk performance test: `$(`$_.Exception.Message)"
         }
         
         return `$true
